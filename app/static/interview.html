@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>模拟面试 - AI 模拟面试</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav>
+    <a href="/">个人主页</a>
+    <a href="/knowledge.html">题库管理</a>
+    <a href="/interview.html" class="active">模拟面试</a>
+    <a href="/settings.html">设置</a>
+  </nav>
+  <main>
+    <h1>模拟面试</h1>
+
+    <!-- 配置视图 -->
+    <div class="card" id="configView">
+      <div class="row">
+        <label>公司
+          <select id="companySelect"><option value="">不限公司</option></select>
+        </label>
+        <label>类别（板块）
+          <select id="categorySelect"><option value="">不限类别</option></select>
+        </label>
+        <label>题目数量
+          <input type="number" id="countInput" value="5" min="1" max="20" />
+        </label>
+      </div>
+      <button id="startBtn">开始面试</button>
+      <span id="configMsg" style="color:#d70015;font-size:13px;margin-left:12px;"></span>
+    </div>
+
+    <!-- 答题视图 -->
+    <div class="card hidden" id="quizView">
+      <div class="progress" id="progress"></div>
+      <div class="meta" id="meta"></div>
+      <div class="question" id="question"></div>
+      <textarea id="answerInput" placeholder="请在此输入你的回答..."></textarea>
+      <div class="actions">
+        <button id="submitBtn">提交回答</button>
+      </div>
+      <div class="feedback hidden" id="feedback">
+        <div class="center">
+          <div class="score-big" id="score"></div>
+          <div style="color:#6e6e73;font-size:13px;">贴合度评分</div>
+        </div>
+        <div id="feedbackBody"></div>
+        <div class="actions">
+          <button id="nextBtn">下一题</button>
+          <button id="finishBtn" class="secondary">结束面试</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结果视图 -->
+    <div class="card hidden center" id="resultView">
+      <h2>面试完成</h2>
+      <p id="resultSummary"></p>
+      <a href="/"><button>查看个人主页与画像</button></a>
+    </div>
+  </main>
+
+  <script>
+    let questions = [];
+    let currentIndex = 0;
+    let interviewId = null;
+
+    async function api(url, options) {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { const j = await res.json(); msg = j.detail || msg; } catch (e) {}
+        throw new Error(msg);
+      }
+      return res.json();
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, m => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+      ));
+    }
+
+    async function loadCompanies() {
+      const list = await api('/api/knowledge/companies');
+      const sel = document.getElementById('companySelect');
+      sel.innerHTML = '<option value="">不限公司</option>' +
+        list.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    }
+
+    async function loadCategories() {
+      const company = document.getElementById('companySelect').value;
+      const q = company ? `?company=${encodeURIComponent(company)}` : '';
+      const list = await api('/api/knowledge/categories' + q);
+      const sel = document.getElementById('categorySelect');
+      sel.innerHTML = '<option value="">不限类别</option>' +
+        list.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    }
+
+    function show(viewId) {
+      ['configView', 'quizView', 'resultView'].forEach(id =>
+        document.getElementById(id).classList.toggle('hidden', id !== viewId));
+    }
+
+    async function startInterview() {
+      const msg = document.getElementById('configMsg');
+      msg.textContent = '';
+      const payload = {
+        company: document.getElementById('companySelect').value,
+        category: document.getElementById('categorySelect').value,
+        count: parseInt(document.getElementById('countInput').value, 10) || 5,
+      };
+      try {
+        const r = await api('/api/interview/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        interviewId = r.interview_id;
+        questions = r.questions;
+        currentIndex = 0;
+        show('quizView');
+        renderQuestion();
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    }
+
+    function renderQuestion() {
+      const q = questions[currentIndex];
+      document.getElementById('progress').textContent = `第 ${currentIndex + 1} / ${questions.length} 题`;
+      document.getElementById('meta').innerHTML =
+        `<span class="tag">${esc(q.company || '未标注公司')}</span><span class="tag">${esc(q.category || '未分类')}</span>`;
+      document.getElementById('question').textContent = q.question;
+      document.getElementById('answerInput').value = '';
+      document.getElementById('answerInput').disabled = false;
+      document.getElementById('submitBtn').disabled = false;
+      document.getElementById('feedback').classList.add('hidden');
+    }
+
+    async function submitAnswer() {
+      const q = questions[currentIndex];
+      const answer = document.getElementById('answerInput').value.trim();
+      if (!answer) { alert('请先输入回答'); return; }
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('submitBtn').textContent = '评估中...';
+      try {
+        const r = await api(`/api/interview/${interviewId}/submit`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ knowledge_item_id: q.id, answer })
+        });
+        renderFeedback(r);
+      } catch (e) {
+        alert('提交失败：' + e.message);
+        document.getElementById('submitBtn').disabled = false;
+      } finally {
+        document.getElementById('submitBtn').textContent = '提交回答';
+      }
+    }
+
+    function renderFeedback(r) {
+      document.getElementById('score').textContent = Math.round(r.score);
+      let html = '';
+      if (r.warning) html += `<div class="warning">${esc(r.warning)}</div>`;
+      if (r.summary) html += `<h3>总体评语</h3><div class="answer-box">${esc(r.summary)}</div>`;
+      if (r.strengths && r.strengths.length)
+        html += `<h3 class="ok">优点</h3><ul>${r.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`;
+      if (r.weaknesses && r.weaknesses.length)
+        html += `<h3 class="warn">不足</h3><ul>${r.weaknesses.map(s => `<li>${esc(s)}</li>`).join('')}</ul>`;
+      if (r.suggestion) html += `<h3>改进建议</h3><div class="answer-box">${esc(r.suggestion)}</div>`;
+      if (r.standard_answer) html += `<h3>标准答案</h3><div class="answer-box">${esc(r.standard_answer)}</div>`;
+      if (r.scoring_points) html += `<h3>评分要点</h3><div class="answer-box">${esc(r.scoring_points)}</div>`;
+      document.getElementById('feedbackBody').innerHTML = html;
+      document.getElementById('feedback').classList.remove('hidden');
+      document.getElementById('answerInput').disabled = true;
+
+      const isLast = currentIndex >= questions.length - 1;
+      document.getElementById('nextBtn').textContent = isLast ? '（已是最后一题）' : '下一题';
+      document.getElementById('nextBtn').disabled = isLast;
+    }
+
+    function nextQuestion() {
+      currentIndex += 1;
+      renderQuestion();
+    }
+
+    async function finishInterview() {
+      await api(`/api/interview/${interviewId}/finish`, { method: 'POST' });
+      show('resultView');
+      const answered = currentIndex + 1;
+      document.getElementById('resultSummary').textContent =
+        `本次面试共 ${questions.length} 题，已完成 ${answered} 题。详细报告与画像请前往个人主页。`;
+    }
+
+    document.getElementById('startBtn').onclick = startInterview;
+    document.getElementById('submitBtn').onclick = submitAnswer;
+    document.getElementById('nextBtn').onclick = nextQuestion;
+    document.getElementById('finishBtn').onclick = finishInterview;
+    document.getElementById('companySelect').onchange = loadCategories;
+
+    loadCompanies().then(loadCategories);
+  </script>
+</body>
+</html>

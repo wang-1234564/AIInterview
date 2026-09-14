@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>设置 - AI 模拟面试</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav>
+    <a href="/">个人主页</a>
+    <a href="/knowledge.html">题库管理</a>
+    <a href="/interview.html">模拟面试</a>
+    <a href="/settings.html" class="active">设置</a>
+  </nav>
+  <main class="narrow">
+    <h1>大模型设置</h1>
+    <div class="sub">
+      配置用于评估回答的大模型。未填写时回退到 .env 的默认配置；
+      两处都没有 API Key 时自动使用本地模拟评估（mock），流程仍可完整体验。
+    </div>
+
+    <div id="status" class="status off"></div>
+
+    <div class="card">
+      <label>供应商
+        <select id="provider"></select>
+      </label>
+      <label>接口地址（Base URL）
+        <input id="baseUrl" placeholder="例如 https://api.deepseek.com" />
+      </label>
+      <label>模型名称
+        <input id="model" placeholder="例如 deepseek-chat" />
+      </label>
+      <label>API Key
+        <input id="apiKey" type="password" autocomplete="off" spellcheck="false" />
+        <div class="hint" id="keyHint"></div>
+      </label>
+      <div class="actions">
+        <button id="saveBtn">保存</button>
+        <button id="testBtn" class="secondary">测试连接</button>
+        <button id="clearKeyBtn" class="secondary">清除已保存的 Key</button>
+        <span id="msg" class="msg"></span>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let providers = [];
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, m => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+      ));
+    }
+
+    async function api(url, options) {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { const j = await res.json(); msg = j.detail || msg; } catch (e) {}
+        throw new Error(msg);
+      }
+      return res.json();
+    }
+
+    function setMsg(text, ok) {
+      const el = document.getElementById('msg');
+      el.textContent = text || '';
+      el.className = 'msg ' + (ok ? 'ok' : 'err');
+    }
+
+    function renderStatus(cfg) {
+      const el = document.getElementById('status');
+      if (cfg.enabled) {
+        el.className = 'status on';
+        el.textContent = `已启用真实评估：${cfg.provider} / ${cfg.model}`;
+      } else if (cfg.mock_forced) {
+        el.className = 'status off';
+        el.textContent = '当前强制使用 mock 评估（USE_MOCK_EVALUATOR=true），保存的配置暂不生效。';
+      } else {
+        el.className = 'status off';
+        el.textContent = '尚未配置 API Key，当前使用 mock 评估。填写并保存 API Key 后即可启用真实评估。';
+      }
+    }
+
+    function fillForm(cfg) {
+      document.getElementById('provider').value = cfg.provider;
+      document.getElementById('baseUrl').value = cfg.base_url || '';
+      document.getElementById('model').value = cfg.model || '';
+      document.getElementById('apiKey').value = '';
+      const hint = document.getElementById('keyHint');
+      if (cfg.api_key_masked) {
+        hint.textContent = '已保存：' + cfg.api_key_masked + '（留空表示不修改）';
+      } else if (cfg.using_env_key) {
+        hint.textContent = '当前使用 .env 中的 Key（留空表示不修改）';
+      } else {
+        hint.textContent = '尚未配置';
+      }
+      renderStatus(cfg);
+    }
+
+    async function load() {
+      providers = await api('/api/settings/llm/providers');
+      document.getElementById('provider').innerHTML = providers
+        .map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`)
+        .join('');
+      const cfg = await api('/api/settings/llm');
+      fillForm(cfg);
+    }
+
+    function onProviderChange() {
+      const p = providers.find(x => x.id === document.getElementById('provider').value);
+      if (!p) return;
+      document.getElementById('baseUrl').value = p.base_url || '';
+      document.getElementById('baseUrl').placeholder = p.base_url || '例如 https://your-host/v1';
+      document.getElementById('model').value = p.model || '';
+      document.getElementById('model').placeholder = p.model || '例如 gpt-4o-mini';
+    }
+
+    // override 为 undefined 时不改动已保存的 Key；传 '' 表示清除
+    async function save(override) {
+      const payload = {
+        provider: document.getElementById('provider').value,
+        base_url: document.getElementById('baseUrl').value.trim(),
+        model: document.getElementById('model').value.trim(),
+      };
+      if (override !== undefined) {
+        payload.api_key = override;
+      } else {
+        const typed = document.getElementById('apiKey').value.trim();
+        if (typed) payload.api_key = typed;
+      }
+      setMsg('保存中…', true);
+      try {
+        const cfg = await api('/api/settings/llm', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        fillForm(cfg);
+        setMsg('已保存', true);
+      } catch (e) {
+        setMsg('保存失败：' + e.message, false);
+      }
+    }
+
+    async function testConn() {
+      const btn = document.getElementById('testBtn');
+      btn.disabled = true;
+      setMsg('测试中…', true);
+      try {
+        const payload = {
+          provider: document.getElementById('provider').value,
+          base_url: document.getElementById('baseUrl').value.trim(),
+          model: document.getElementById('model').value.trim(),
+        };
+        // 允许在「保存」前先测试刚填写的 Key
+        const typed = document.getElementById('apiKey').value.trim();
+        if (typed) payload.api_key = typed;
+        const r = await api('/api/settings/llm/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        setMsg(`连接成功（${r.provider} / ${r.model}）：${r.sample || '已连通（模型未返回文本）'}`, true);
+      } catch (e) {
+        setMsg('连接失败：' + e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById('provider').addEventListener('change', onProviderChange);
+    document.getElementById('saveBtn').onclick = () => save();
+    document.getElementById('testBtn').onclick = testConn;
+    document.getElementById('clearKeyBtn').onclick = () => {
+      if (confirm('确定清除已保存的 API Key 吗？')) save('');
+    };
+
+    load().catch(e => setMsg('加载失败：' + e.message, false));
+  </script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>题库管理 - AI 模拟面试</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <nav>
+    <a href="/">个人主页</a>
+    <a href="/knowledge.html" class="active">题库管理</a>
+    <a href="/interview.html">模拟面试</a>
+    <a href="/settings.html">设置</a>
+  </nav>
+  <main class="wide">
+    <h1>题库管理</h1>
+
+    <div class="toolbar">
+      <button id="uploadBtn">上传题库（Excel/CSV）</button>
+      <input type="file" id="fileInput" accept=".csv,.xlsx" hidden />
+      <a href="/api/knowledge/template"><button type="button" class="secondary">下载模板</button></a>
+      <button id="addBtn">单条录入</button>
+      <span id="uploadMsg" style="color:#0071e3;font-size:13px;"></span>
+    </div>
+
+    <div class="filters">
+      <select id="companySelect"><option value="">全部公司</option></select>
+      <select id="categorySelect"><option value="">全部类别</option></select>
+      <input id="keywordInput" placeholder="关键词搜索题目/答案" />
+      <button id="searchBtn">搜索</button>
+      <button id="resetBtn" class="secondary">重置</button>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>公司</th><th>类别</th><th>题目</th><th>标准答案</th><th>来源</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+
+    <div class="pager">
+      <button id="prevBtn" class="secondary" type="button">上一页</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn" class="secondary" type="button">下一页</button>
+    </div>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <h2>编辑题目</h2>
+      <label>公司 <input id="editCompany" /></label>
+      <label>类别 <input id="editCategory" /></label>
+      <label>题目 <textarea id="editQuestion"></textarea></label>
+      <label>标准答案 <textarea id="editAnswer"></textarea></label>
+      <label>评分要点（可选） <textarea id="editPoints"></textarea></label>
+      <div class="modal-actions">
+        <button id="saveBtn">保存</button>
+        <button id="cancelBtn" class="secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="addModal" class="modal" hidden>
+    <div class="modal-box">
+      <h2>单条录入题目</h2>
+      <label>公司 <input id="addCompany" placeholder="例如：阿里巴巴" /></label>
+      <label>类别 <input id="addCategory" placeholder="例如：Java基础" /></label>
+      <label>题目 <textarea id="addQuestion"></textarea></label>
+      <label>标准答案 <textarea id="addAnswer"></textarea></label>
+      <label>评分要点（可选） <textarea id="addPoints"></textarea></label>
+      <div class="modal-actions">
+        <button id="addSaveBtn">保存</button>
+        <button id="addCancelBtn" class="secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentEditId = null;
+
+    async function api(url, options) {
+      const res = await fetch(url, options);
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { const j = await res.json(); msg = j.detail || msg; } catch (e) {}
+        throw new Error(msg);
+      }
+      return res.json();
+    }
+
+    async function loadCompanies() {
+      const list = await api('/api/knowledge/companies');
+      const sel = document.getElementById('companySelect');
+      sel.innerHTML = '<option value="">全部公司</option>' +
+        list.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    }
+
+    async function loadCategories() {
+      const company = document.getElementById('companySelect').value;
+      const q = company ? `?company=${encodeURIComponent(company)}` : '';
+      const list = await api('/api/knowledge/categories' + q);
+      const sel = document.getElementById('categorySelect');
+      sel.innerHTML = '<option value="">全部类别</option>' +
+        list.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, m => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+      ));
+    }
+
+    const PAGE_SIZE = 20;
+    let offset = 0;
+
+    function filterParams() {
+      const params = new URLSearchParams();
+      const company = document.getElementById('companySelect').value;
+      const category = document.getElementById('categorySelect').value;
+      const keyword = document.getElementById('keywordInput').value.trim();
+      if (company) params.set('company', company);
+      if (category) params.set('category', category);
+      if (keyword) params.set('keyword', keyword);
+      return params;
+    }
+
+    async function loadItems(resetPage) {
+      if (resetPage) offset = 0;
+      const params = filterParams();
+      params.set('limit', PAGE_SIZE);
+      params.set('offset', offset);
+      const res = await api('/api/knowledge/items?' + params.toString());
+
+      // 当前页被删空时自动回退一页
+      if (!res.items.length && offset > 0) {
+        offset = Math.max(0, offset - PAGE_SIZE);
+        return loadItems();
+      }
+
+      const tbody = document.getElementById('tbody');
+      const from = res.total === 0 ? 0 : offset + 1;
+      const to = Math.min(offset + res.items.length, res.total);
+      document.getElementById('stats').textContent = res.total
+        ? `共 ${res.total} 道题目，当前显示 ${from}-${to}`
+        : '共 0 道题目';
+
+      const totalPages = Math.max(1, Math.ceil(res.total / PAGE_SIZE));
+      document.getElementById('pageInfo').textContent =
+        `第 ${Math.floor(offset / PAGE_SIZE) + 1} / ${totalPages} 页`;
+      document.getElementById('prevBtn').disabled = offset <= 0;
+      document.getElementById('nextBtn').disabled = offset + PAGE_SIZE >= res.total;
+
+      if (!res.items.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无题目，请先上传 Excel/CSV 题库</td></tr>';
+        return;
+      }
+      tbody.innerHTML = res.items.map(it => `
+        <tr>
+          <td>${esc(it.company)}</td>
+          <td><span class="tag">${esc(it.category)}</span></td>
+          <td class="q">${esc(it.question)}</td>
+          <td class="ans">${esc(it.standard_answer)}</td>
+          <td>${esc(it.source_file || '-')}</td>
+          <td class="actions">
+            <button onclick="openEdit(${it.id})">编辑</button>
+            <button class="del" onclick="delItem(${it.id})">删除</button>
+          </td>
+        </tr>`).join('');
+    }
+
+    async function uploadFile() {
+      const input = document.getElementById('fileInput');
+      if (!input.files.length) return;
+      const fd = new FormData();
+      fd.append('file', input.files[0]);
+      const msg = document.getElementById('uploadMsg');
+      msg.textContent = '上传中...';
+      try {
+        const r = await api('/api/knowledge/upload', { method: 'POST', body: fd });
+        msg.textContent = `导入完成：新增 ${r.imported}，跳过重复 ${r.skipped}`;
+        input.value = '';
+        await loadCompanies();
+        await loadItems(true);
+      } catch (e) {
+        msg.textContent = '上传失败：' + e.message;
+      }
+    }
+
+    async function openEdit(id) {
+      const it = await api('/api/knowledge/items/' + id);
+      currentEditId = id;
+      document.getElementById('editCompany').value = it.company;
+      document.getElementById('editCategory').value = it.category;
+      document.getElementById('editQuestion').value = it.question;
+      document.getElementById('editAnswer').value = it.standard_answer;
+      document.getElementById('editPoints').value = it.scoring_points || '';
+      document.getElementById('modal').hidden = false;
+    }
+
+    async function saveEdit() {
+      const payload = {
+        company: document.getElementById('editCompany').value.trim(),
+        category: document.getElementById('editCategory').value.trim(),
+        question: document.getElementById('editQuestion').value.trim(),
+        standard_answer: document.getElementById('editAnswer').value.trim(),
+        scoring_points: document.getElementById('editPoints').value.trim(),
+      };
+      await api('/api/knowledge/items/' + currentEditId, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      document.getElementById('modal').hidden = true;
+      await loadCompanies();
+      await loadCategories();
+      await loadItems(true);
+    }
+
+    async function delItem(id) {
+      if (!confirm('确定删除这道题目？')) return;
+      await api('/api/knowledge/items/' + id, { method: 'DELETE' });
+      await loadCompanies();
+      await loadCategories();
+      await loadItems();  // 保持当前页；若被删空会自动回退
+    }
+
+    async function addItem() {
+      const payload = {
+        company: document.getElementById('addCompany').value.trim(),
+        category: document.getElementById('addCategory').value.trim(),
+        question: document.getElementById('addQuestion').value.trim(),
+        standard_answer: document.getElementById('addAnswer').value.trim(),
+        scoring_points: document.getElementById('addPoints').value.trim(),
+      };
+      if (!payload.question || !payload.standard_answer) {
+        alert('请填写题目和标准答案');
+        return;
+      }
+      try {
+        await api('/api/knowledge/items', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        document.getElementById('addModal').hidden = true;
+        ['addCompany', 'addCategory', 'addQuestion', 'addAnswer', 'addPoints']
+          .forEach(id => document.getElementById(id).value = '');
+        await Promise.all([loadCompanies(), loadCategories(), loadItems()]);
+      } catch (e) {
+        alert('录入失败：' + e.message);
+      }
+    }
+
+    document.getElementById('uploadBtn').onclick = () => document.getElementById('fileInput').click();
+    document.getElementById('fileInput').onchange = uploadFile;
+    document.getElementById('searchBtn').onclick = () => loadItems(true);
+    document.getElementById('resetBtn').onclick = () => {
+      document.getElementById('companySelect').value = '';
+      document.getElementById('categorySelect').value = '';
+      document.getElementById('keywordInput').value = '';
+      loadCategories().then(() => loadItems(true));
+    };
+    document.getElementById('companySelect').onchange = () => loadCategories().then(() => loadItems(true));
+    document.getElementById('categorySelect').onchange = () => loadItems(true);
+    document.getElementById('keywordInput').onkeydown = e => { if (e.key === 'Enter') loadItems(true); };
+    document.getElementById('prevBtn').onclick = () => { offset = Math.max(0, offset - PAGE_SIZE); loadItems(); };
+    document.getElementById('nextBtn').onclick = () => { offset += PAGE_SIZE; loadItems(); };
+    document.getElementById('saveBtn').onclick = saveEdit;
+    document.getElementById('cancelBtn').onclick = () => { document.getElementById('modal').hidden = true; };
+    document.getElementById('addBtn').onclick = () => { document.getElementById('addModal').hidden = false; };
+    document.getElementById('addSaveBtn').onclick = addItem;
+    document.getElementById('addCancelBtn').onclick = () => { document.getElementById('addModal').hidden = true; };
+
+    loadCompanies().then(() => loadItems(true));
+  </script>
+</body>
+</html>
