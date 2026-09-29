@@ -1,8 +1,27 @@
-# AI 模拟面试智能体
+# AI 模拟面试智能体 · AI Mock Interview
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![LLM](https://img.shields.io/badge/LLM-DeepSeek%20%7C%20OpenAI%20%7C%20Qwen-orange.svg)]()
 
 基于 FastAPI 的 AI 模拟面试系统，用于个人面试练习：录入题库（标注公司），由大模型评估你的回答与标准答案的贴合程度，分析优缺点，生成分析报告，并据此维护个人画像、给出学习优化建议。界面简洁，功能开箱即用。
 
+**A local-first AI mock interview system built with FastAPI.** Import your question bank (tagged by company), answer randomly drawn questions, and let an LLM (DeepSeek / OpenAI / Qwen / any OpenAI-compatible endpoint) score how closely your answer matches the reference, highlight strengths & weaknesses, and generate a personalized study plan. Runs entirely on your own machine — no account required.
+
 > **本地单机应用**：直接在自己电脑上运行，无需注册 / 登录，服务默认只监听 `127.0.0.1`。如果你要把它放到公网，请自行补充鉴权与 HTTPS 等防护。
+>
+> **Local single-machine app**: run it on your own computer. No sign-up. The server listens on `127.0.0.1` by default; add your own auth & HTTPS if you expose it publicly.
+
+## 界面预览 · Screenshots
+
+| 个人主页 · Home | 题库管理 · Question bank |
+| --- | --- |
+| ![个人主页](docs/screenshots/home.png) | ![题库管理](docs/screenshots/knowledge.png) |
+
+| 模拟面试 · Mock interview | 大模型设置 · Settings |
+| --- | --- |
+| ![模拟面试](docs/screenshots/interview.png) | ![大模型设置](docs/screenshots/settings.png) |
 
 ## 功能
 
@@ -11,6 +30,14 @@
 - **分析报告**：面试结束生成整体分析报告（逐题结果 + 综合评语）
 - **用户画像**：按板块聚合贴合度得分，识别薄弱板块，给出学习优化建议；历史快照按需保存（`POST /api/profile/snapshots`，最多保留最近 50 条）
 - **大模型设置**：在「设置」页选择供应商（DeepSeek / OpenAI / 通义千问 / 自定义 OpenAI 兼容接口），填写 API Key、Base URL 与模型，支持「测试连接」；配置保存在本地数据库（**API Key 加密存储**），未配置时回退 `.env`，两处都没有 Key 时自动使用本地 mock 评估
+
+## Features (English)
+
+- **Question bank**: bulk import from Excel/CSV or add one-by-one; manage, filter, edit and delete questions by company/category
+- **Mock interview**: randomly draw questions by company + category + count; answer one by one with instant scoring & feedback (strengths / weaknesses / suggestions / reference answer)
+- **Report**: a full analysis report after each interview (per-question results + overall comment)
+- **Profile**: aggregate scores by category to spot weak areas and get a personalized study plan; save snapshots on demand (up to 50)
+- **LLM settings**: pick a provider (DeepSeek / OpenAI / Qwen / custom OpenAI-compatible), enter API Key, Base URL & model, with a "test connection" button; config stored locally (**API keys encrypted**), falls back to `.env`, then to a local mock evaluator
 
 ## 快速开始
 
